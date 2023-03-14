@@ -341,6 +341,7 @@ set(LLVM_ALL_TARGETS
   AVR
   BPF
   Hexagon
+  Koda
   Lanai
   Mips
   MSP430
