@@ -6,6 +6,7 @@
 class InstFormat<bits<5> val> {
   bits<5> Value = val;
 }
+def InstFormatPseudo : InstFormat<0>;
 def InstFormatR      : InstFormat<1>;
 def InstFormatI      : InstFormat<3>;
 def InstFormatS      : InstFormat<4>;
@@ -56,6 +57,13 @@ def OPC_BRANCH : KodaOpcode<"BRANCH", 0b1100011>;
 def OPC_JALR : KodaOpcode<"JALR", 0b1100111>;
 def OPC_JAL : KodaOpcode<"JAL", 0b1101111>;
 def OPC_SYSTEM : KodaOpcode<"SYSTEM", 0b1110011>;
+
+// Pseudo instructions
+class Pseudo<dag outs, dag ins, list<dag> pattern, string opcodestr = "", string argstr = "">
+    : KodaInst<outs, ins, opcodestr, pattern, InstFormatPseudo> {
+  let isPseudo = 1;
+  let isCodeGenOnly = 1;
+}
 
 // Base Instruction Formats described in Volume I: RISC-V Unprivileged ISA
 

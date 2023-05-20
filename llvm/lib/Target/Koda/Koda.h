@@ -19,9 +19,35 @@
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
-  class KodaTargetMachine;
-  class FunctionPass;
+class KodaTargetMachine;
+class FunctionPass;
+class KodaSubtarget;
+class AsmPrinter;
+class InstructionSelector;
+class MCInst;
+class MCOperand;
+class MachineInstr;
+class MachineOperand;
+class PassRegistry;
 
-} // end namespace llvm;
+bool lowerKodaMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
+                                    AsmPrinter &AP);
+bool LowerKodaMachineOperandToMCOperand(const MachineOperand &MO,
+                                         MCOperand &MCOp, const AsmPrinter &AP);
+
+FunctionPass *createKodaISelDag(KodaTargetMachine &TM,
+                                CodeGenOpt::Level OptLevel);
+
+
+namespace Koda {
+enum {
+  GP = Koda::X3,
+  RA = Koda::X1,
+  SP = Koda::X2,
+  FP = Koda::X8
+};
+} // namespace Koda
+
+} // namespace llvm
 
 #endif

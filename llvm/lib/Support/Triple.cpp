@@ -38,6 +38,7 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
   case bpfel:          return "bpfel";
   case csky:           return "csky";
   case hexagon:        return "hexagon";
+  case Koda:           return "koda";
   case hsail64:        return "hsail64";
   case hsail:          return "hsail";
   case kalimba:        return "kalimba";
@@ -308,6 +309,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
     .Case("riscv32", riscv32)
     .Case("riscv64", riscv64)
     .Case("hexagon", hexagon)
+    .Case("Koda", Koda)
     .Case("sparc", sparc)
     .Case("sparcel", sparcel)
     .Case("sparcv9", sparcv9)
@@ -447,6 +449,7 @@ static Triple::ArchType parseArch(StringRef ArchName) {
     .Case("riscv32", Triple::riscv32)
     .Case("riscv64", Triple::riscv64)
     .Case("hexagon", Triple::hexagon)
+    .Case("Koda", Triple::Koda)
     .Cases("s390x", "systemz", Triple::systemz)
     .Case("sparc", Triple::sparc)
     .Case("sparcel", Triple::sparcel)
@@ -725,6 +728,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::bpfel:
   case Triple::csky:
   case Triple::hexagon:
+  case Triple::Koda:
   case Triple::hsail64:
   case Triple::hsail:
   case Triple::kalimba:
@@ -1286,6 +1290,7 @@ static unsigned getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::armeb:
   case llvm::Triple::csky:
   case llvm::Triple::hexagon:
+  case llvm::Triple::Koda:
   case llvm::Triple::hsail:
   case llvm::Triple::kalimba:
   case llvm::Triple::lanai:
@@ -1373,6 +1378,7 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::armeb:
   case Triple::csky:
   case Triple::hexagon:
+  case Triple::Koda:
   case Triple::hsail:
   case Triple::kalimba:
   case Triple::lanai:
@@ -1434,6 +1440,7 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::avr:
   case Triple::csky:
   case Triple::hexagon:
+  case Triple::Koda:
   case Triple::kalimba:
   case Triple::lanai:
   case Triple::m68k:

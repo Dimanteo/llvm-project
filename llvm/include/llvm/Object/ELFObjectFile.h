@@ -1202,6 +1202,8 @@ StringRef ELFObjectFile<ELFT>::getFileFormatName() const {
       return "elf32-sparc";
     case ELF::EM_AMDGPU:
       return "elf32-amdgpu";
+    case ELF::EM_KODA:
+      return "elf32-Koda";
     default:
       return "elf32-unknown";
     }
@@ -1313,6 +1315,8 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
     return Triple::ve;
   case ELF::EM_CSKY:
     return Triple::csky;
+  case ELF::EM_KODA:
+    return Triple::Koda;
   default:
     return Triple::UnknownArch;
   }

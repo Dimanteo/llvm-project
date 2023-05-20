@@ -158,3 +158,8 @@ def FENCE : KodaInstI<0b000, OPC_MISC_MEM, (outs),
   let rd = 0;
   let imm12 = {0b0000,pred,succ};
 }
+
+let Defs = [X2], Uses = [X2] in {
+def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), []>;
+def ADJCALLSTACKUP   : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), []>;
+} // Defs = [X2], Uses = [X2]

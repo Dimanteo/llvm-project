@@ -20,6 +20,7 @@
 #include "Targets/AVR.h"
 #include "Targets/BPF.h"
 #include "Targets/Hexagon.h"
+#include "Targets/Koda.h"
 #include "Targets/Lanai.h"
 #include "Targets/Le64.h"
 #include "Targets/M68k.h"
@@ -41,6 +42,7 @@
 #include "clang/Basic/Diagnostic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Support/ErrorHandling.h"
 
 using namespace clang;
 
@@ -123,6 +125,9 @@ TargetInfo *AllocateTarget(const llvm::Triple &Triple,
         Triple.getEnvironment() == llvm::Triple::Musl)
       return new LinuxTargetInfo<HexagonTargetInfo>(Triple, Opts);
     return new HexagonTargetInfo(Triple, Opts);
+
+  case llvm::Triple::Koda:
+    return new KodaTargetInfo(Triple, Opts);
 
   case llvm::Triple::lanai:
     return new LanaiTargetInfo(Triple, Opts);

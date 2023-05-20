@@ -57,7 +57,7 @@ public:
     bpfeb,          // eBPF or extended BPF or 64-bit BPF (big endian)
     csky,           // CSKY: csky
     hexagon,        // Hexagon: hexagon
-    koda,           // Koda architecture. RISC-V alike
+    Koda,           // Koda architecture. RISC-V alike
     m68k,           // M68k: Motorola 680x0 family
     mips,           // MIPS: mips, mipsallegrex, mipsr6
     mipsel,         // MIPSEL: mipsel, mipsallegrexe, mipsr6el

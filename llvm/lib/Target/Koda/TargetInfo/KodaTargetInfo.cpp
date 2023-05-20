@@ -9,13 +9,16 @@
 
 #include "Koda.h"
 #include "llvm/IR/Module.h"
+#include "TargetInfo/KodaTargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+
 using namespace llvm;
 
-Target llvm::TheKodaTarget;
+Target &llvm::getTheKodaTarget() {
+  static Target TheKodaTarget;
+  return TheKodaTarget;
+}
 
-extern "C" void LLVMInitializeKodaTargetInfo() {
-  RegisterTarget<Triple::koda,
-                 /*HasJIT=*/false>
-      X(TheKodaTarget, "Koda", "Koda (32-bit RISC-V arch)", "Koda");
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeKodaTargetInfo() {
+  RegisterTarget<Triple::Koda, false> X(getTheKodaTarget(), "Koda", "Koda (32-bit RISC-V arch)", "Koda");
 }
