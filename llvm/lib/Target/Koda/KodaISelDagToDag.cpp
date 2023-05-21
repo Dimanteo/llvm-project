@@ -86,6 +86,13 @@ void KodaDAGToDAGISel::Select(SDNode *Node) {
   MVT VT = Node->getSimpleValueType(0);
 
   switch (Opcode) {
+  case ISD::Constant: {
+    // auto *ConstNode = cast<ConstantSDNode>(Node);
+    SDValue New =
+        CurDAG->getCopyFromReg(CurDAG->getEntryNode(), DL, Koda::X0, MVT::i32);
+    ReplaceNode(Node, New.getNode());
+    return;
+  }
   case ISD::FrameIndex: {
     SDValue Imm = CurDAG->getTargetConstant(0, DL, MVT::i32);
     int FI = cast<FrameIndexSDNode>(Node)->getIndex();

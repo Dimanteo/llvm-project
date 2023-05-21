@@ -27,7 +27,8 @@
 
 using namespace llvm;
 
-static const MCPhysReg ArgGPRs[] = {Koda::X28, Koda::X29, Koda::X30, Koda::X31};
+static const MCPhysReg ArgGPRs[] = {Koda::X10, Koda::X11, Koda::X12, Koda::X13,
+                                    Koda::X14, Koda::X15, Koda::X16, Koda::X17};
 
 void KodaTargetLowering::ReplaceNodeResults(SDNode *N,
                                             SmallVectorImpl<SDValue> &Results,
@@ -74,8 +75,10 @@ const char *KodaTargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case KodaISD::CALL:
     return "KodaISD::CALL";
-  case KodaISD::RET:
-    return "KodaISD::RET";
+  case KodaISD::RET_FLAG:
+    return "KodaISD::RET_FLAG";
+  case KodaISD::BR_CC:
+    return "KodaISD::BR_CC";
   }
   return nullptr;
 }
@@ -89,6 +92,250 @@ const char *KodaTargetLowering::getTargetNodeName(unsigned Opcode) const {
 //===----------------------------------------------------------------------===//
 //                  Call Calling Convention Implementation
 //===----------------------------------------------------------------------===//
+
+// Pass a 2*XLEN argument that has been split into two XLEN values through
+// registers or the stack as necessary.
+static bool CC_KodaAssign2XLen(unsigned XLen, CCState &State, CCValAssign VA1,
+                              ISD::ArgFlagsTy ArgFlags1, unsigned ValNo2,
+                              MVT ValVT2, MVT LocVT2,
+                              ISD::ArgFlagsTy ArgFlags2) {
+  unsigned XLenInBytes = XLen / 8;
+  if (Register Reg = State.AllocateReg(ArgGPRs)) {
+    // At least one half can be passed via register.
+    State.addLoc(CCValAssign::getReg(VA1.getValNo(), VA1.getValVT(), Reg,
+                                     VA1.getLocVT(), CCValAssign::Full));
+  } else {
+    // Both halves must be passed on the stack, with proper alignment.
+    Align StackAlign =
+        std::max(Align(XLenInBytes), ArgFlags1.getNonZeroOrigAlign());
+    State.addLoc(
+        CCValAssign::getMem(VA1.getValNo(), VA1.getValVT(),
+                            State.AllocateStack(XLenInBytes, StackAlign),
+                            VA1.getLocVT(), CCValAssign::Full));
+    State.addLoc(CCValAssign::getMem(
+        ValNo2, ValVT2, State.AllocateStack(XLenInBytes, Align(XLenInBytes)),
+        LocVT2, CCValAssign::Full));
+    return false;
+  }
+
+  if (Register Reg = State.AllocateReg(ArgGPRs)) {
+    // The second half can also be passed via register.
+    State.addLoc(
+        CCValAssign::getReg(ValNo2, ValVT2, Reg, LocVT2, CCValAssign::Full));
+  } else {
+    // The second half is passed via the stack, without additional alignment.
+    State.addLoc(CCValAssign::getMem(
+        ValNo2, ValVT2, State.AllocateStack(XLenInBytes, Align(XLenInBytes)),
+        LocVT2, CCValAssign::Full));
+  }
+
+  return false;
+}
+
+// Implements the RISC-V calling convention. Returns true upon failure.
+static bool CC_Koda(const DataLayout &DL, KodaABI::ABI ABI, unsigned ValNo,
+                   MVT ValVT, MVT LocVT, CCValAssign::LocInfo LocInfo,
+                   ISD::ArgFlagsTy ArgFlags, CCState &State, bool IsFixed,
+                   bool IsRet, Type *OrigTy, const KodaTargetLowering &TLI,
+                   Optional<unsigned> FirstMaskArgument) {
+  unsigned XLen = DL.getLargestLegalIntTypeSizeInBits();
+  assert(XLen == 32 || XLen == 64);
+  MVT XLenVT = XLen == 32 ? MVT::i32 : MVT::i64;
+
+  // Any return value split in to more than two values can't be returned
+  // directly. Vectors are returned via the available vector registers.
+  if (!LocVT.isVector() && IsRet && ValNo > 1)
+    return true;
+
+  // UseGPRForF16_F32 if targeting one of the soft-float ABIs, if passing a
+  // variadic argument, or if no F16/F32 argument registers are available.
+  bool UseGPRForF16_F32 = true;
+  // UseGPRForF64 if targeting soft-float ABIs or an FLEN=32 ABI, if passing a
+  // variadic argument, or if no F64 argument registers are available.
+  bool UseGPRForF64 = true;
+
+  // From this point on, rely on UseGPRForF16_F32, UseGPRForF64 and
+  // similar local variables rather than directly checking against the target
+  // ABI.
+
+  if (UseGPRForF16_F32 && (ValVT == MVT::f16 || ValVT == MVT::f32)) {
+    LocVT = XLenVT;
+    LocInfo = CCValAssign::BCvt;
+  } else if (UseGPRForF64 && XLen == 64 && ValVT == MVT::f64) {
+    LocVT = MVT::i64;
+    LocInfo = CCValAssign::BCvt;
+  }
+
+  // If this is a variadic argument, the RISC-V calling convention requires
+  // that it is assigned an 'even' or 'aligned' register if it has 8-byte
+  // alignment (RV32) or 16-byte alignment (RV64). An aligned register should
+  // be used regardless of whether the original argument was split during
+  // legalisation or not. The argument will not be passed by registers if the
+  // original type is larger than 2*XLEN, so the register alignment rule does
+  // not apply.
+  unsigned TwoXLenInBytes = (2 * XLen) / 8;
+  if (!IsFixed && ArgFlags.getNonZeroOrigAlign() == TwoXLenInBytes &&
+      DL.getTypeAllocSize(OrigTy) == TwoXLenInBytes) {
+    unsigned RegIdx = State.getFirstUnallocated(ArgGPRs);
+    // Skip 'odd' register if necessary.
+    if (RegIdx != array_lengthof(ArgGPRs) && RegIdx % 2 == 1)
+      State.AllocateReg(ArgGPRs);
+  }
+
+  SmallVectorImpl<CCValAssign> &PendingLocs = State.getPendingLocs();
+  SmallVectorImpl<ISD::ArgFlagsTy> &PendingArgFlags =
+      State.getPendingArgFlags();
+
+  assert(PendingLocs.size() == PendingArgFlags.size() &&
+         "PendingLocs and PendingArgFlags out of sync");
+
+  // Handle passing f64 on RV32D with a soft float ABI or when floating point
+  // registers are exhausted.
+  if (UseGPRForF64 && XLen == 32 && ValVT == MVT::f64) {
+    assert(!ArgFlags.isSplit() && PendingLocs.empty() &&
+           "Can't lower f64 if it is split");
+    // Depending on available argument GPRS, f64 may be passed in a pair of
+    // GPRs, split between a GPR and the stack, or passed completely on the
+    // stack. LowerCall/LowerFormalArguments/LowerReturn must recognise these
+    // cases.
+    Register Reg = State.AllocateReg(ArgGPRs);
+    LocVT = MVT::i32;
+    if (!Reg) {
+      unsigned StackOffset = State.AllocateStack(8, Align(8));
+      State.addLoc(
+          CCValAssign::getMem(ValNo, ValVT, StackOffset, LocVT, LocInfo));
+      return false;
+    }
+    if (!State.AllocateReg(ArgGPRs))
+      State.AllocateStack(4, Align(4));
+    State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+    return false;
+  }
+
+  // Split arguments might be passed indirectly, so keep track of the pending
+  // values. Split vectors are passed via a mix of registers and indirectly, so
+  // treat them as we would any other argument.
+  if (ValVT.isScalarInteger() && (ArgFlags.isSplit() || !PendingLocs.empty())) {
+    LocVT = XLenVT;
+    LocInfo = CCValAssign::Indirect;
+    PendingLocs.push_back(
+        CCValAssign::getPending(ValNo, ValVT, LocVT, LocInfo));
+    PendingArgFlags.push_back(ArgFlags);
+    if (!ArgFlags.isSplitEnd()) {
+      return false;
+    }
+  }
+
+  // If the split argument only had two elements, it should be passed directly
+  // in registers or on the stack.
+  if (ValVT.isScalarInteger() && ArgFlags.isSplitEnd() &&
+      PendingLocs.size() <= 2) {
+    assert(PendingLocs.size() == 2 && "Unexpected PendingLocs.size()");
+    // Apply the normal calling convention rules to the first half of the
+    // split argument.
+    CCValAssign VA = PendingLocs[0];
+    ISD::ArgFlagsTy AF = PendingArgFlags[0];
+    PendingLocs.clear();
+    PendingArgFlags.clear();
+    return CC_KodaAssign2XLen(XLen, State, VA, AF, ValNo, ValVT, LocVT,
+                             ArgFlags);
+  }
+
+  // Allocate to a register if possible, or else a stack slot.
+  Register Reg = State.AllocateReg(ArgGPRs);
+  unsigned StoreSizeBytes = XLen / 8;
+  Align StackAlign = Align(XLen / 8);
+
+  unsigned StackOffset =
+      Reg ? 0 : State.AllocateStack(StoreSizeBytes, StackAlign);
+
+  // If we reach this point and PendingLocs is non-empty, we must be at the
+  // end of a split argument that must be passed indirectly.
+  if (!PendingLocs.empty()) {
+    assert(ArgFlags.isSplitEnd() && "Expected ArgFlags.isSplitEnd()");
+    assert(PendingLocs.size() > 2 && "Unexpected PendingLocs.size()");
+
+    for (auto &It : PendingLocs) {
+      if (Reg)
+        It.convertToReg(Reg);
+      else
+        It.convertToMem(StackOffset);
+      State.addLoc(It);
+    }
+    PendingLocs.clear();
+    PendingArgFlags.clear();
+    return false;
+  }
+
+  if (Reg) {
+    State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+    return false;
+  }
+
+  // When a floating-point value is passed on the stack, no bit-conversion is
+  // needed.
+  if (ValVT.isFloatingPoint()) {
+    LocVT = ValVT;
+    LocInfo = CCValAssign::Full;
+  }
+  State.addLoc(CCValAssign::getMem(ValNo, ValVT, StackOffset, LocVT, LocInfo));
+  return false;
+}
+
+void KodaTargetLowering::analyzeOutputArgs(
+    MachineFunction &MF, CCState &CCInfo,
+    const SmallVectorImpl<ISD::OutputArg> &Outs, bool IsRet,
+    CallLoweringInfo *CLI, KodaCCAssignFn Fn) const {
+  unsigned NumArgs = Outs.size();
+
+  Optional<unsigned> FirstMaskArgument;
+  for (unsigned i = 0; i != NumArgs; i++) {
+    MVT ArgVT = Outs[i].VT;
+    ISD::ArgFlagsTy ArgFlags = Outs[i].Flags;
+    Type *OrigTy = CLI ? CLI->getArgs()[Outs[i].OrigArgIndex].Ty : nullptr;
+
+    KodaABI::ABI ABI = MF.getSubtarget<KodaSubtarget>().getTargetABI();
+    if (Fn(MF.getDataLayout(), ABI, i, ArgVT, ArgVT, CCValAssign::Full,
+           ArgFlags, CCInfo, Outs[i].IsFixed, IsRet, OrigTy, *this,
+           FirstMaskArgument)) {
+      LLVM_DEBUG(dbgs() << "OutputArg #" << i << " has unhandled type "
+                        << EVT(ArgVT).getEVTString() << "\n");
+      llvm_unreachable(nullptr);
+    }
+  }
+}
+
+void KodaTargetLowering::analyzeInputArgs(
+    MachineFunction &MF, CCState &CCInfo,
+    const SmallVectorImpl<ISD::InputArg> &Ins, bool IsRet,
+    KodaCCAssignFn Fn) const {
+  unsigned NumArgs = Ins.size();
+  FunctionType *FType = MF.getFunction().getFunctionType();
+
+  Optional<unsigned> FirstMaskArgument;
+
+  for (unsigned i = 0; i != NumArgs; ++i) {
+    MVT ArgVT = Ins[i].VT;
+    ISD::ArgFlagsTy ArgFlags = Ins[i].Flags;
+
+    Type *ArgTy = nullptr;
+    if (IsRet)
+      ArgTy = FType->getReturnType();
+    else if (Ins[i].isOrigArg())
+      ArgTy = FType->getParamType(Ins[i].getOrigArgIndex());
+
+    KodaABI::ABI ABI = MF.getSubtarget<KodaSubtarget>().getTargetABI();
+    if (Fn(MF.getDataLayout(), ABI, i, ArgVT, ArgVT, CCValAssign::Full,
+           ArgFlags, CCInfo, /*IsFixed=*/true, IsRet, ArgTy, *this,
+           FirstMaskArgument)) {
+      LLVM_DEBUG(dbgs() << "InputArg #" << i << " has unhandled type "
+                        << EVT(ArgVT).getEVTString() << '\n');
+      llvm_unreachable(nullptr);
+    }
+  }
+}
+
+
 
 static Align getPrefTypeAlign(EVT VT, SelectionDAG &DAG) {
   return DAG.getDataLayout().getPrefTypeAlign(
@@ -517,26 +764,32 @@ SDValue KodaTargetLowering::LowerFormalArguments(
 //===----------------------------------------------------------------------===//
 //               Return Value Calling Convention Implementation
 //===----------------------------------------------------------------------===//
-
 bool KodaTargetLowering::CanLowerReturn(
     CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
     const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context) const {
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, RVLocs, Context);
-  if (!CCInfo.CheckReturn(Outs, RetCC_Koda))
-    return false;
-  if (CCInfo.getNextStackOffset() != 0 && IsVarArg)
-    llvm_unreachable(""); // TODO: what for
+
+  Optional<unsigned> FirstMaskArgument;
+
+  for (unsigned i = 0, e = Outs.size(); i != e; ++i) {
+    MVT VT = Outs[i].VT;
+    ISD::ArgFlagsTy ArgFlags = Outs[i].Flags;
+    KodaABI::ABI ABI = MF.getSubtarget<KodaSubtarget>().getTargetABI();
+    if (CC_Koda(MF.getDataLayout(), ABI, i, VT, VT, CCValAssign::Full, ArgFlags,
+               CCInfo, /*IsFixed=*/true, /*IsRet=*/true, nullptr, *this,
+               FirstMaskArgument))
+      return false;
+  }
   return true;
 }
 
-// TODO: rewrite
 SDValue
 KodaTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
-                                bool IsVarArg,
-                                const SmallVectorImpl<ISD::OutputArg> &Outs,
-                                const SmallVectorImpl<SDValue> &OutVals,
-                                const SDLoc &DL, SelectionDAG &DAG) const {
+                                 bool IsVarArg,
+                                 const SmallVectorImpl<ISD::OutputArg> &Outs,
+                                 const SmallVectorImpl<SDValue> &OutVals,
+                                 const SDLoc &DL, SelectionDAG &DAG) const {
   const MachineFunction &MF = DAG.getMachineFunction();
   const KodaSubtarget &STI = MF.getSubtarget<KodaSubtarget>();
 
@@ -547,7 +800,11 @@ KodaTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RVLocs,
                  *DAG.getContext());
 
-  CCInfo.AnalyzeReturn(Outs, RetCC_Koda);
+  analyzeOutputArgs(DAG.getMachineFunction(), CCInfo, Outs, /*IsRet=*/true,
+                    nullptr, CC_Koda);
+
+  if (CallConv == CallingConv::GHC && !RVLocs.empty())
+    report_fatal_error("GHC functions return void only");
 
   SDValue Glue;
   SmallVector<SDValue, 4> RetOps(1, Chain);
@@ -558,6 +815,7 @@ KodaTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
     CCValAssign &VA = RVLocs[i];
     assert(VA.isRegLoc() && "Can only return in registers!");
 
+    // Handle a 'normal' return.
     Val = convertValVTToLocVT(DAG, Val, VA, DL, STI);
     Chain = DAG.getCopyToReg(Chain, DL, VA.getLocReg(), Val, Glue);
 
@@ -567,13 +825,34 @@ KodaTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
   }
 
   RetOps[0] = Chain; // Update chain.
+
   // Add the glue node if we have it.
   if (Glue.getNode()) {
     RetOps.push_back(Glue);
   }
-  return DAG.getNode(KodaISD::RET, DL, MVT::Other, RetOps);
-}
 
+  unsigned RetOpc = KodaISD::RET_FLAG;
+  // Interrupt service routines use different return instructions.
+  const Function &Func = DAG.getMachineFunction().getFunction();
+  if (Func.hasFnAttribute("interrupt")) {
+    if (!Func.getReturnType()->isVoidTy())
+      report_fatal_error(
+          "Functions with the interrupt attribute must have void return type!");
+
+    MachineFunction &MF = DAG.getMachineFunction();
+    StringRef Kind =
+      MF.getFunction().getFnAttribute("interrupt").getValueAsString();
+
+    if (Kind == "user")
+      RetOpc = KodaISD::URET_FLAG;
+    else if (Kind == "supervisor")
+      RetOpc = KodaISD::SRET_FLAG;
+    else
+      RetOpc = KodaISD::MRET_FLAG;
+  }
+
+  return DAG.getNode(RetOpc, DL, MVT::Other, RetOps);
+}
 //===----------------------------------------------------------------------===//
 // Target Optimization Hooks
 //===----------------------------------------------------------------------===//

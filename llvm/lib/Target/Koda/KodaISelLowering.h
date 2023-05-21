@@ -2,6 +2,8 @@
 #define LLVM_LIB_TARGET_Koda_KodaISELLOWERING_H
 
 #include "Koda.h"
+#include "MCTargetDesc/KodaInfo.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
 
@@ -15,9 +17,12 @@ namespace KodaISD {
 enum NodeType : unsigned {
   // Start the numbering where the builtin ops and target ops leave off.
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
-  RET,
-  CALL,
+  RET_FLAG,
+  URET_FLAG,
+  SRET_FLAG,
+  MRET_FLAG,
   BR_CC,
+  CALL,
 };
 
 } // namespace KodaISD
@@ -43,6 +48,25 @@ public:
 
 private:
   const KodaSubtarget &STI;
+
+  /// RISCVCCAssignFn - This target-specific function extends the default
+  /// CCValAssign with additional information used to lower RISC-V calling
+  /// conventions.
+  typedef bool KodaCCAssignFn(const DataLayout &DL, KodaABI::ABI,
+                               unsigned ValNo, MVT ValVT, MVT LocVT,
+                               CCValAssign::LocInfo LocInfo,
+                               ISD::ArgFlagsTy ArgFlags, CCState &State,
+                               bool IsFixed, bool IsRet, Type *OrigTy,
+                               const KodaTargetLowering &TLI,
+                               Optional<unsigned> FirstMaskArgument);
+
+  void analyzeInputArgs(MachineFunction &MF, CCState &CCInfo,
+                        const SmallVectorImpl<ISD::InputArg> &Ins, bool IsRet,
+                        KodaCCAssignFn Fn) const;
+  void analyzeOutputArgs(MachineFunction &MF, CCState &CCInfo,
+                         const SmallVectorImpl<ISD::OutputArg> &Outs,
+                         bool IsRet, CallLoweringInfo *CLI,
+                         KodaCCAssignFn Fn) const;
 
   void ReplaceNodeResults(SDNode *N, SmallVectorImpl<SDValue> &Results,
                           SelectionDAG &DAG) const override;

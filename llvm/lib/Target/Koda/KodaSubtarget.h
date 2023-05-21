@@ -6,6 +6,7 @@
 #include "KodaInstrInfo.h"
 #include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "MCTargetDesc/KodaInfo.h"
 #include <string>
 
 #define GET_SUBTARGETINFO_HEADER
@@ -24,6 +25,9 @@ class KodaSubtarget : public KodaGenSubtargetInfo {
   KodaFrameLowering FrameLowering;
   KodaTargetLowering TLInfo;
   SelectionDAGTargetInfo TSInfo;
+  KodaABI::ABI TargetABI = KodaABI::ABI_ILP32;
+  MVT XLenVT = MVT::i32;
+  unsigned XLen = 32;
 
 public:
   KodaSubtarget(const Triple &TT, const std::string &CPU, const std::string &FS,
@@ -43,6 +47,10 @@ public:
   const SelectionDAGTargetInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
+
+  auto getTargetABI() const { return TargetABI; }
+  auto getXLenVT() const { return XLenVT; }
+  auto getXLen() const { return XLen; }
 };
 
 } // end namespace llvm

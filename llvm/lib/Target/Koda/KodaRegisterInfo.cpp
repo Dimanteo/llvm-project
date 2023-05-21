@@ -34,22 +34,21 @@ bool KodaRegisterInfo::needsFrameMoves(const MachineFunction &MF) {
 
 const MCPhysReg *
 KodaRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
+  if (MF->getFunction().getCallingConv() == CallingConv::GHC)
+    return CSR_NoRegs_SaveList;
+  if (MF->getFunction().hasFnAttribute("interrupt"))
+    return CSR_Interrupt_SaveList;
+
   return CSR_Koda_SaveList;
 }
 
 // TODO: check cconv
 BitVector KodaRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  Reserved.set(Koda::X18);
-  Reserved.set(Koda::X19);
-  Reserved.set(Koda::X20);
-  Reserved.set(Koda::X21);
-  Reserved.set(Koda::X22);
-  Reserved.set(Koda::X23);
-  Reserved.set(Koda::X24);
-  Reserved.set(Koda::X25);
-  Reserved.set(Koda::X26);
-  Reserved.set(Koda::X27);
+  markSuperRegs(Reserved, Koda::X0);
+  markSuperRegs(Reserved, Koda::X2);
+  markSuperRegs(Reserved, Koda::X3);
+  markSuperRegs(Reserved, Koda::X4);
   return Reserved;
 }
 
@@ -92,11 +91,21 @@ void KodaRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
 Register KodaRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
   const TargetFrameLowering *TFI = getFrameLowering(MF);
-  return TFI->hasFP(MF) ? Koda::FP : Koda::SP;
+  return TFI->hasFP(MF) ? Koda::X8 : Koda::X2;
 }
 
 const uint32_t *
 KodaRegisterInfo::getCallPreservedMask(const MachineFunction &MF,
                                        CallingConv::ID CC) const {
+  auto &Subtarget = MF.getSubtarget<KodaSubtarget>();
+
+  if (CC == CallingConv::GHC)
+    return CSR_NoRegs_RegMask;
+  switch (Subtarget.getTargetABI()) {
+  default:
+    llvm_unreachable("Unrecognized ABI");
+  case KodaABI::ABI_ILP32:
+    return CSR_Koda_RegMask;
+  }
   return CSR_Koda_RegMask;
 }

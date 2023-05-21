@@ -30,6 +30,10 @@ enum OperandType : unsigned {
 };
 } // namespace KodaOp
 
+namespace KodaABI {
+enum ABI { ABI_ILP32, ABI_Unknown };
+}
+
 } // end namespace llvm
 
 #endif

@@ -7,6 +7,79 @@ include "KodaInstrFormats.td"
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
+// RISC-V specific DAG Nodes.
+//===----------------------------------------------------------------------===//
+
+// Target-independent type requirements, but with target-specific formats.
+def SDT_CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i32>,
+                                       SDTCisVT<1, i32>]>;
+def SDT_CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>,
+                                     SDTCisVT<1, i32>]>;
+
+// Target-dependent type requirements.
+def SDT_KodaCall     : SDTypeProfile<0, -1, [SDTCisVT<0, XLenVT>]>;
+def SDT_KodaSelectCC : SDTypeProfile<1, 5, [SDTCisSameAs<1, 2>,
+                                             SDTCisVT<3, OtherVT>,
+                                             SDTCisSameAs<0, 4>,
+                                             SDTCisSameAs<4, 5>]>;
+def SDT_KodaBrCC : SDTypeProfile<0, 4, [SDTCisSameAs<0, 1>,
+                                         SDTCisVT<2, OtherVT>,
+                                         SDTCisVT<3, OtherVT>]>;
+def SDT_KodaReadCSR  : SDTypeProfile<1, 1, [SDTCisInt<0>, SDTCisInt<1>]>;
+def SDT_KodaWriteCSR : SDTypeProfile<0, 2, [SDTCisInt<0>, SDTCisInt<1>]>;
+def SDT_KodaSwapCSR  : SDTypeProfile<1, 2, [SDTCisInt<0>, SDTCisInt<1>,
+                                             SDTCisInt<2>]>;
+def SDT_KodaReadCycleWide : SDTypeProfile<2, 0, [SDTCisVT<0, i32>,
+                                                  SDTCisVT<1, i32>]>;
+def SDT_KodaIntUnaryOpW : SDTypeProfile<1, 1, [
+  SDTCisSameAs<0, 1>, SDTCisVT<0, i64>
+]>;
+def SDT_KodaIntBinOpW : SDTypeProfile<1, 2, [
+  SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>, SDTCisVT<0, i64>
+]>;
+def SDT_KodaIntShiftDOpW : SDTypeProfile<1, 3, [
+  SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>, SDTCisVT<0, i64>, SDTCisVT<3, i64>
+]>;
+
+// Target-independent nodes, but with target-specific formats.
+def callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_CallSeqStart,
+                           [SDNPHasChain, SDNPOutGlue]>;
+def callseq_end   : SDNode<"ISD::CALLSEQ_END", SDT_CallSeqEnd,
+                           [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
+
+// Target-dependent nodes.
+def Koda_call      : SDNode<"KodaISD::CALL", SDT_KodaCall,
+                             [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
+                              SDNPVariadic]>;
+def Koda_ret_flag  : SDNode<"KodaISD::RET_FLAG", SDTNone,
+                             [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+def Koda_uret_flag : SDNode<"KodaISD::URET_FLAG", SDTNone,
+                             [SDNPHasChain, SDNPOptInGlue]>;
+def Koda_sret_flag : SDNode<"KodaISD::SRET_FLAG", SDTNone,
+                             [SDNPHasChain, SDNPOptInGlue]>;
+def Koda_mret_flag : SDNode<"KodaISD::MRET_FLAG", SDTNone,
+                             [SDNPHasChain, SDNPOptInGlue]>;
+def Koda_selectcc  : SDNode<"KodaISD::SELECT_CC", SDT_KodaSelectCC>;
+def Koda_brcc      : SDNode<"KodaISD::BR_CC", SDT_KodaBrCC,
+                             [SDNPHasChain]>;
+def Koda_tail      : SDNode<"KodaISD::TAIL", SDT_KodaCall,
+                             [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
+                              SDNPVariadic]>;
+def Koda_sllw      : SDNode<"KodaISD::SLLW", SDT_KodaIntBinOpW>;
+def Koda_sraw      : SDNode<"KodaISD::SRAW", SDT_KodaIntBinOpW>;
+def Koda_srlw      : SDNode<"KodaISD::SRLW", SDT_KodaIntBinOpW>;
+def Koda_read_csr  : SDNode<"KodaISD::READ_CSR", SDT_KodaReadCSR,
+                             [SDNPHasChain]>;
+def Koda_write_csr : SDNode<"KodaISD::WRITE_CSR", SDT_KodaWriteCSR,
+                             [SDNPHasChain]>;
+def Koda_swap_csr  : SDNode<"KodaISD::SWAP_CSR", SDT_KodaSwapCSR,
+                             [SDNPHasChain]>;
+
+def Koda_read_cycle_wide : SDNode<"KodaISD::READ_CYCLE_WIDE",
+                                   SDT_KodaReadCycleWide,
+                                   [SDNPHasChain, SDNPSideEffect]>;
+
+//===----------------------------------------------------------------------===//
 // Type requirements for Koda instructions
 //===----------------------------------------------------------------------===//
 
@@ -32,6 +105,13 @@ def fencearg : Operand<i32> {}
 // Instructions
 //===----------------------------------------------------------------------===//
 
+def : ProcessorModel<"generic-32", NoSchedModel, []>;
+
+def KodaAsmParser : AsmParser {
+  let ShouldEmitMatchRegisterAltName = 1;
+  let AllowDuplicateRegisterNames = 1;
+}
+
 let hasSideEffects = 0, mayLoad = 0,
     mayStore =
         0 in class ALU_rr<bits<7> funct7, bits<3> funct3, string opcodestr>
@@ -40,7 +120,7 @@ let hasSideEffects = 0, mayLoad = 0,
                  : $rd),
                 (ins HartRegs
                  : $rs1, HartRegs
-                 : $rs2), "$rd, $rs1, $rs2", []>;
+                 : $rs2), opcodestr, "$rd, $rs1, $rs2", []>;
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in 
 class ALU_ri<bits<3> funct3, string opcodestr>
@@ -101,7 +181,8 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
                                         (ins simm20 : $imm20),
                                         "jal", "$rd, $imm20", []>;
 
-  let isCall = 1 in def JALR : KodaInstI<0b000, OPC_JALR,
+  let isCall = 1
+  in def JALR : KodaInstI<0b000, OPC_JALR,
                                          (outs HartRegs
                                           : $rd),
                                          (ins HartRegs
@@ -158,6 +239,13 @@ def FENCE : KodaInstI<0b000, OPC_MISC_MEM, (outs),
   let rd = 0;
   let imm12 = {0b0000,pred,succ};
 }
+
+def WriteJmp        : SchedWrite;
+def ReadJmp         : SchedRead;
+
+let isBarrier = 1, isReturn = 1, isTerminator = 1 in
+def PseudoRET : Pseudo<(outs), (ins), [(Koda_ret_flag)]>,
+                PseudoInstExpansion<(JALR X0, X1, 0)>;
 
 let Defs = [X2], Uses = [X2] in {
 def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), []>;

@@ -14,7 +14,7 @@ def InstFormatB      : InstFormat<5>;
 def InstFormatU      : InstFormat<6>;
 def InstFormatJ      : InstFormat<7>;
 
-class KodaInst<dag outs, dag ins, string asmstr, list<dag> pattern, InstFormat format>
+class KodaInst<dag outs, dag ins, string asmstr, string argstr, list<dag> pattern, InstFormat format>
     : Instruction {
   let Namespace = "Koda";
   let DecoderNamespace = "Koda";
@@ -28,8 +28,9 @@ class KodaInst<dag outs, dag ins, string asmstr, list<dag> pattern, InstFormat f
 
   let OutOperandList = outs;
   let InOperandList = ins;
-  let AsmString = asmstr;
+  let AsmString = asmstr # "\t" # argstr;
   let Pattern = pattern;
+  let TSFlags{4-0} = format.Value;
 }
 
 class KodaOpcode<string name, bits<7> val> {
@@ -58,18 +59,50 @@ def OPC_JALR : KodaOpcode<"JALR", 0b1100111>;
 def OPC_JAL : KodaOpcode<"JAL", 0b1101111>;
 def OPC_SYSTEM : KodaOpcode<"SYSTEM", 0b1110011>;
 
+def BareSymbol : AsmOperandClass {
+  let Name = "BareSymbol";
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = "InvalidBareSymbol";
+  let ParserMethod = "parseBareSymbol";
+}
+
+// A bare symbol.
+def bare_symbol : Operand<XLenVT> {
+  let ParserMatchClass = BareSymbol;
+}
+
 // Pseudo instructions
 class Pseudo<dag outs, dag ins, list<dag> pattern, string opcodestr = "", string argstr = "">
-    : KodaInst<outs, ins, opcodestr, pattern, InstFormatPseudo> {
+    : KodaInst<outs, ins, opcodestr, argstr, pattern, InstFormatPseudo> {
   let isPseudo = 1;
   let isCodeGenOnly = 1;
+}
+
+// Pseudo load instructions.
+class PseudoLoad<string opcodestr, RegisterClass rdty = HartRegs>
+    : Pseudo<(outs rdty:$rd), (ins bare_symbol:$addr), [], opcodestr, "$rd, $addr"> {
+  let hasSideEffects = 0;
+  let mayLoad = 1;
+  let mayStore = 0;
+  let isCodeGenOnly = 0;
+  let isAsmParserOnly = 1;
+}
+
+// Pseudo store instructions.
+class PseudoStore<string opcodestr, RegisterClass rsty = HartRegs>
+    : Pseudo<(outs HartRegs:$tmp), (ins rsty:$rs, bare_symbol:$addr), [], opcodestr, "$rs, $addr, $tmp"> {
+  let hasSideEffects = 0;
+  let mayLoad = 0;
+  let mayStore = 1;
+  let isCodeGenOnly = 0;
+  let isAsmParserOnly = 1;
 }
 
 // Base Instruction Formats described in Volume I: RISC-V Unprivileged ISA
 
 class KodaInstR<bits<7> funct7, bits<3> funct3, KodaOpcode op, dag outs,
-                dag ins, string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatR> {
+                dag ins, string opstr, string asmstr, list<dag> pattern>
+    : KodaInst<outs, ins, opstr, asmstr, pattern, InstFormatR> {
   bits<5> rs2;
   bits<5> rs1;
   bits<5> rd;
@@ -84,7 +117,7 @@ class KodaInstR<bits<7> funct7, bits<3> funct3, KodaOpcode op, dag outs,
 
 class KodaInstI<bits<3> funct3, KodaOpcode op, dag outs, dag ins, string opstr,
                 string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatI> {
+    : KodaInst<outs, ins, opstr, asmstr, pattern, InstFormatI> {
   bits<12> imm12;
   bits<5> rs1;
   bits<5> rd;
@@ -98,7 +131,7 @@ class KodaInstI<bits<3> funct3, KodaOpcode op, dag outs, dag ins, string opstr,
 
 class KodaInstS<bits<3> funct3, KodaOpcode op, dag outs, dag ins, string opstr,
                 string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatS> {
+    : KodaInst<outs, ins, opstr, asmstr, pattern, InstFormatS> {
   bits<12> imm12;
   bits<5> rs2;
   bits<5> rs1;
@@ -113,7 +146,7 @@ class KodaInstS<bits<3> funct3, KodaOpcode op, dag outs, dag ins, string opstr,
 
 class KodaInstB<bits<3> funct3, KodaOpcode opcode, dag outs, dag ins,
                 string opcodestr, string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatB> {
+    : KodaInst<outs, ins, opcodestr, asmstr, pattern, InstFormatB> {
   bits<12> imm12;
   bits<5> rs2;
   bits<5> rs1;
@@ -130,7 +163,7 @@ class KodaInstB<bits<3> funct3, KodaOpcode opcode, dag outs, dag ins,
 
 class KodaInstU<KodaOpcode opcode, dag outs, dag ins, string opcodestr,
                 string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatU> {
+    : KodaInst<outs, ins, opcodestr, asmstr, pattern, InstFormatU> {
   bits<20> imm20;
   bits<5> rd;
 
@@ -141,7 +174,7 @@ class KodaInstU<KodaOpcode opcode, dag outs, dag ins, string opcodestr,
 
 class KodaInstJ<KodaOpcode opcode, dag outs, dag ins, string opcodestr,
                 string asmstr, list<dag> pattern>
-    : KodaInst<outs, ins, asmstr, pattern, InstFormatJ> {
+    : KodaInst<outs, ins, opcodestr, asmstr, pattern, InstFormatJ> {
   bits<5> rd;
   bits<20> imm20;
 
@@ -155,7 +188,7 @@ class KodaInstJ<KodaOpcode opcode, dag outs, dag ins, string opcodestr,
 
 class KodaInstIShift<bits<5> imm11_7, bits<3> funct3, KodaOpcode opcode,
                      dag outs, dag ins, string opcodestr, string asmstr>
-    : KodaInst<outs, ins, asmstr, [], InstFormatI> {
+    : KodaInst<outs, ins, opcodestr, asmstr, [], InstFormatI> {
   bits<6> shamt;
   bits<5> rs1;
   bits<5> rd;
@@ -171,7 +204,7 @@ class KodaInstIShift<bits<5> imm11_7, bits<3> funct3, KodaOpcode opcode,
 
 class KodaInstIShiftW<bits<7> imm11_5, bits<3> funct3, KodaOpcode opcode,
                       dag outs, dag ins, string opcodestr, string asmstr>
-    : KodaInst<outs, ins, asmstr, [], InstFormatI> {
+    : KodaInst<outs, ins, opcodestr, asmstr, [], InstFormatI> {
   bits<5> shamt;
   bits<5> rs1;
   bits<5> rd;

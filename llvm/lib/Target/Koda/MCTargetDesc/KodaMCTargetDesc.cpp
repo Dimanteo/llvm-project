@@ -27,14 +27,14 @@
 
 using namespace llvm;
 
+#define GET_REGINFO_MC_DESC
+#include "KodaGenRegisterInfo.inc"
+
 #define GET_INSTRINFO_MC_DESC
 #include "KodaGenInstrInfo.inc"
 
 #define GET_SUBTARGETINFO_MC_DESC
 #include "KodaGenSubtargetInfo.inc"
-
-#define GET_REGINFO_MC_DESC
-#include "KodaGenRegisterInfo.inc"
 
 static MCInstrInfo *createKodaMCInstrInfo() {
   auto *X = new MCInstrInfo();

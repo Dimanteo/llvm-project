@@ -56,6 +56,29 @@ void KodaFrameLowering::adjustStackToMatchRecords(
   llvm_unreachable("");
 }
 
+// Returns the register used to hold the frame pointer.
+static Register getFPReg(const KodaSubtarget &STI) { return Koda::X8; }
+
+// Returns the register used to hold the stack pointer.
+static Register getSPReg(const KodaSubtarget &STI) { return Koda::X2; }
+
+// Determines the size of the frame and maximum call frame size.
+void KodaFrameLowering::determineFrameLayout(MachineFunction &MF) const {
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+
+  // Get the number of bytes to allocate from the FrameInfo.
+  uint64_t FrameSize = MFI.getStackSize();
+
+  // Get the alignment.
+  Align StackAlign = getStackAlign();
+
+  // Make sure the frame is aligned.
+  FrameSize = alignTo(FrameSize, StackAlign);
+
+  // Update frame info.
+  MFI.setStackSize(FrameSize);
+}
+
 // TODO: seems ok
 void KodaFrameLowering::emitPrologue(MachineFunction &MF,
                                      MachineBasicBlock &MBB) const {
@@ -64,8 +87,8 @@ void KodaFrameLowering::emitPrologue(MachineFunction &MF,
   const KodaRegisterInfo *RI = STI.getRegisterInfo();
   MachineBasicBlock::iterator MBBI = MBB.begin();
 
-  Register FPReg = Koda::FP;
-  Register SPReg = Koda::SP;
+  Register FPReg = getFPReg(STI);
+  Register SPReg = getSPReg(STI);
 
   // Debug location must be unknown since the first debug location is used
   // to determine the end of the prologue.
@@ -114,8 +137,8 @@ void KodaFrameLowering::emitEpilogue(MachineFunction &MF,
   const KodaRegisterInfo *RI = STI.getRegisterInfo();
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto *UFI = MF.getInfo<KodaFunctionInfo>();
-  Register FPReg = Koda::FP;
-  Register SPReg = Koda::SP;
+  Register FPReg = getFPReg(STI);
+  Register SPReg = getSPReg(STI);
 
   // Get the insert location for the epilogue. If there were no terminators in
   // the block, get the last instruction.
@@ -213,7 +236,7 @@ void KodaFrameLowering::processFunctionBeforeFrameFinalized(
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto *UFI = MF.getInfo<KodaFunctionInfo>();
 
-  if (!isInt<16>(MFI.estimateStackSize(MF))) {
+  if (!isInt<12>(MFI.estimateStackSize(MF))) {
     llvm_unreachable(""); // TODO: scavenging?
   }
 
@@ -238,7 +261,7 @@ void KodaFrameLowering::processFunctionBeforeFrameFinalized(
 MachineBasicBlock::iterator KodaFrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator MI) const {
-  Register SPReg = Koda::SP;
+  Register SPReg = getSPReg(STI);
   DebugLoc DL = MI->getDebugLoc();
 
   if (!hasReservedCallFrame(MF)) {
@@ -297,7 +320,7 @@ KodaFrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   }
 
   if (FI >= MinCSFI && FI <= MaxCSFI) {
-    FrameReg = Koda::SP;
+    FrameReg = getSPReg(STI);
     Offset += MFI.getStackSize();
   } else if (RI->hasStackRealignment(MF) && !MFI.isFixedObjectIndex(FI)) {
     // TODO: realigned stack
