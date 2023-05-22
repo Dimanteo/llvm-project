@@ -7,13 +7,13 @@ namespace llvm {
 
 namespace KodaCC {
 enum CondCode {
-  EQ,
-  NE,
-  LT,
-  GE,
-  LTU,
-  GEU,
-  INVALID,
+  COND_EQ,
+  COND_NE,
+  COND_LT,
+  COND_GE,
+  COND_LTU,
+  COND_GEU,
+  COND_INVALID,
 };
 
 CondCode getOppositeBranchCondition(CondCode);
@@ -27,6 +27,9 @@ namespace KodaOp {
 enum OperandType : unsigned {
   OPERAND_SIMMM16 = MCOI::OPERAND_FIRST_TARGET,
   OPERAND_UIMM16,
+  OPERAND_UIMM20,
+  OPERAND_UIMMLOG2XLEN,
+  OPERAND_SIMM12
 };
 } // namespace KodaOp
 
@@ -36,6 +39,17 @@ enum ABI { ABI_ILP32, ABI_Unknown };
 
 
 namespace KodaII {
+
+enum {
+  InstFormatPseudo = 0,
+  InstFormatR = 1,
+  InstFormatR4 = 2,
+  InstFormatI = 3,
+  InstFormatS = 4,
+  InstFormatB = 5,
+  InstFormatU = 6,
+  InstFormatJ = 7,
+};
 
 enum {
   MO_None = 0,

@@ -943,8 +943,10 @@ static void translateSetCCForBranch(const SDLoc &DL, SDValue &LHS, SDValue &RHS,
   switch (CC) {
   default:
     break;
-  case ISD::SETLT:
-  case ISD::SETGE:
+  case ISD::SETLE:
+  case ISD::SETGT:
+  case ISD::SETULE:
+  case ISD::SETUGT:
     CC = ISD::getSetCCSwappedOperands(CC);
     std::swap(LHS, RHS);
     break;
@@ -991,6 +993,6 @@ SDValue KodaTargetLowering::LowerOperation(SDValue Op,
   case ISD::FRAMEADDR:
     return lowerFRAMEADDR(Op, DAG);
   default:
-    llvm_unreachable("");
+    llvm_unreachable("Can't lower operation");
   }
 }

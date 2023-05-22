@@ -79,9 +79,21 @@ def Koda_read_cycle_wide : SDNode<"KodaISD::READ_CYCLE_WIDE",
                                    SDT_KodaReadCycleWide,
                                    [SDNPHasChain, SDNPSideEffect]>;
 
-//===----------------------------------------------------------------------===//
-// Type requirements for Koda instructions
-//===----------------------------------------------------------------------===//
+def sim_add_lo : SDNode<"simISD::ADD_LO", SDTIntBinOp>;
+def sim_hi : SDNode<"simISD::HI", SDTIntUnaryOp>;
+def sim_lla : SDNode<"simISD::LLA", SDTIntUnaryOp>;
+def sim_add_tprel : SDNode<"simISD::ADD_TPREL",
+                             SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>,
+                                                  SDTCisSameAs<0, 2>,
+                                                  SDTCisSameAs<0, 3>,
+                                                  SDTCisInt<0>]>>;
+
+def sim_la : SDNode<"simISD::LA", SDTLoad,
+                      [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+def sim_la_tls_ie : SDNode<"simISD::LA_TLS_IE", SDTLoad,
+                             [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
+def sim_la_tls_gd : SDNode<"simISD::LA_TLS_GD", SDTIntUnaryOp>;
+
 
 //===----------------------------------------------------------------------===//
 // Operand and SDNode transformation definitions.
@@ -149,6 +161,18 @@ def UImmLog2XLenAsmOperand : AsmOperandClass {
   let DiagnosticType = "InvalidUImmLog2XLen";
 }
 
+// A 12-bit signed immediate plus one where the imm range will be -2047~2048.
+def simm12_plus1 : ImmLeaf<XLenVT,
+  [{return (isInt<12>(Imm) && Imm != -2048) || Imm == 2048;}]>;
+
+// Return the negation of an immediate value.
+def NegImm : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(-N->getSExtValue(), SDLoc(N),
+                                   N->getValueType(0));
+}]>;
+
+def ixlenimm : Operand<XLenVT>;
+
 def uimmlog2xlen : Operand<XLenVT>, ImmLeaf<XLenVT, [{
   return isUInt<5>(Imm);
 }]> {
@@ -163,8 +187,8 @@ def uimmlog2xlen : Operand<XLenVT>, ImmLeaf<XLenVT, [{
       return isUInt<6>(Imm);
     return isUInt<5>(Imm);
   }];
-  // let OperandType = "OPERAND_UIMMLOG2XLEN";
-  // let OperandNamespace = "KodaOp";
+  let OperandType = "OPERAND_UIMMLOG2XLEN";
+  let OperandNamespace = "KodaOp";
 }
 
 def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]> {
@@ -177,8 +201,8 @@ def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]> {
       return isInt<12>(Imm);
     return MCOp.isBareSymbolRef();
   }];
-  // let OperandType = "OPERAND_SIMM12";
-  // let OperandNamespace = "KodaOp";
+  let OperandType = "OPERAND_SIMM12";
+  let OperandNamespace = "KodaOp";
 }
 
 
@@ -200,8 +224,8 @@ class UImm20Operand : Operand<XLenVT> {
       return isUInt<20>(Imm);
     return MCOp.isBareSymbolRef();
   }];
-  // let OperandType = "OPERAND_UIMM20";
-  // let OperandNamespace = "KodaOp";
+  let OperandType = "OPERAND_UIMM20";
+  let OperandNamespace = "KodaOp";
 }
 
 def uimm20_lui : UImm20Operand {
@@ -252,13 +276,6 @@ def call_symbol : Operand<XLenVT> {
 // Instructions
 //===----------------------------------------------------------------------===//
 
-def : ProcessorModel<"generic-32", NoSchedModel, []>;
-
-def KodaAsmParser : AsmParser {
-  let ShouldEmitMatchRegisterAltName = 1;
-  let AllowDuplicateRegisterNames = 1;
-}
-
 let hasSideEffects = 0, mayLoad = 0,
     mayStore =
         0 in class ALU_rr<bits<7> funct7, bits<3> funct3, string opcodestr>
@@ -287,6 +304,13 @@ let hasSideEffects = 0, mayLoad = 0,
                      (ins HartRegs
                       : $rs1, uimmlog2xlen : $shamt),
                      opcodestr, "$rd, $rs1, $shamt">;
+
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
+def ADDIW : KodaInstI<0b000, OPC_OP_IMM_32, (outs HartRegs:$rd),
+                    (ins HartRegs:$rs1, simm12:$imm12),
+                    "addiw", "$rd, $rs1, $imm12", []>,
+            Sched<[WriteIALU32, ReadIALU32]>;
+
 
 def ADDI : ALU_ri<0b000, "addi">;
 def SLTI : ALU_ri<0b010, "sltu">;
@@ -339,7 +363,7 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
 
 // PseudoCALL is a pseudo instruction which will eventually expand to auipc
 // and jalr while encoding. This is desirable, as an auipc+jalr pair with
-// R_sim_CALL and R_sim_RELAX relocations can be be relaxed by the linker
+// R_Koda_CALL and R_Koda_RELAX relocations can be be relaxed by the linker
 // if the offset fits in a signed 21-bit immediate.
 // Define AsmString to print "call" when compile with -S flag.
 // Define isCodeGenOnly = 0 to support parsing assembly "call" instruction.
@@ -365,7 +389,8 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 class BranchCC_rri<bits<3> funct3, string opcodestr>
     : KodaInstB<funct3, OPC_BRANCH, (outs),
               (ins HartRegs:$rs1, HartRegs:$rs2, simm12 : $imm12),
-              opcodestr, "$rs1, $rs2, $imm12", []> {
+              opcodestr, "$rs1, $rs2, $imm12", []>,
+              Sched<[WriteJmp, ReadJmp, ReadJmp]>  {
   let isBranch = 1;
   let isTerminator = 1;
 }
@@ -377,6 +402,86 @@ def BLT  : BranchCC_rri<0b100, "blt">;
 def BGE  : BranchCC_rri<0b101, "bge">;
 def BLTU : BranchCC_rri<0b110, "bltu">;
 def BGEU : BranchCC_rri<0b111, "bgeu">;
+
+/// Setcc
+
+class PatGprImm<SDPatternOperator OpNode, KodaInst Inst, ImmLeaf ImmType>
+    : Pat<(XLenVT (OpNode (XLenVT HartRegs:$rs1), ImmType:$imm)),
+          (Inst HartRegs:$rs1, ImmType:$imm)>;
+class PatGprSimm12<SDPatternOperator OpNode, KodaInstI Inst>
+    : PatGprImm<OpNode, Inst, simm12>;
+class PatGprUimmLog2XLen<SDPatternOperator OpNode, KodaInstIShift Inst>
+    : PatGprImm<OpNode, Inst, uimmlog2xlen>;
+
+class PatGpr<SDPatternOperator OpNode, KodaInst Inst>
+    : Pat<(OpNode HartRegs:$rs1), (Inst HartRegs:$rs1)>;
+class PatGprGpr<SDPatternOperator OpNode, KodaInst Inst>
+    : Pat<(OpNode HartRegs:$rs1, HartRegs:$rs2), 
+          (Inst HartRegs:$rs1, HartRegs:$rs2)>;
+
+def : PatGprGpr<setlt, SLT>;
+def : PatGprSimm12<setlt, SLTI>;
+def : PatGprGpr<setult, SLTU>;
+def : PatGprSimm12<setult, SLTIU>;
+
+// Define pattern expansions for setcc operations that aren't directly
+// handled by a RISC-V instruction.
+def : Pat<(seteq HartRegs:$rs1, 0), (SLTIU HartRegs:$rs1, 1)>;
+def : Pat<(seteq HartRegs:$rs1, HartRegs:$rs2), (SLTIU (XOR HartRegs:$rs1, HartRegs:$rs2), 1)>;
+def : Pat<(seteq HartRegs:$rs1, simm12_plus1:$imm12),
+          (SLTIU (ADDI HartRegs:$rs1, (NegImm simm12_plus1:$imm12)), 1)>;
+def : Pat<(setne HartRegs:$rs1, 0), (SLTU X0, HartRegs:$rs1)>;
+def : Pat<(setne HartRegs:$rs1, HartRegs:$rs2), (SLTU X0, (XOR HartRegs:$rs1, HartRegs:$rs2))>;
+def : Pat<(setne HartRegs:$rs1, simm12_plus1:$imm12),
+          (SLTU X0, (ADDI HartRegs:$rs1, (NegImm simm12_plus1:$imm12)))>;
+def : Pat<(setugt HartRegs:$rs1, HartRegs:$rs2), (SLTU HartRegs:$rs2, HartRegs:$rs1)>;
+def : Pat<(setuge HartRegs:$rs1, HartRegs:$rs2), (XORI (SLTU HartRegs:$rs1, HartRegs:$rs2), 1)>;
+def : Pat<(setule HartRegs:$rs1, HartRegs:$rs2), (XORI (SLTU HartRegs:$rs2, HartRegs:$rs1), 1)>;
+def : Pat<(setgt HartRegs:$rs1, HartRegs:$rs2), (SLT HartRegs:$rs2, HartRegs:$rs1)>;
+def : Pat<(setge HartRegs:$rs1, HartRegs:$rs2), (XORI (SLT HartRegs:$rs1, HartRegs:$rs2), 1)>;
+def : Pat<(setle HartRegs:$rs1, HartRegs:$rs2), (XORI (SLT HartRegs:$rs2, HartRegs:$rs1), 1)>;
+
+def IntCCtoKodaCC : SDNodeXForm<Koda_selectcc, [{
+  ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
+  KodaCC::CondCode BrCC = getKodaCCForIntCC(CC);
+  return CurDAG->getTargetConstant(BrCC, SDLoc(N), Subtarget->getXLenVT());
+}]>;
+
+def Koda_selectcc_frag : PatFrag<(ops node:$lhs, node:$rhs, node:$cc,
+                                       node:$truev, node:$falsev),
+                                  (Koda_selectcc node:$lhs, node:$rhs,
+                                                  node:$cc, node:$truev,
+                                                  node:$falsev), [{}],
+                                  IntCCtoKodaCC>;
+
+let usesCustomInserter = 1 in
+class SelectCC_rrirr<RegisterClass valty, RegisterClass cmpty>
+    : Pseudo<(outs valty:$dst),
+             (ins cmpty:$lhs, cmpty:$rhs, ixlenimm:$imm,
+              valty:$truev, valty:$falsev),
+             [(set valty:$dst,
+               (Koda_selectcc_frag:$imm cmpty:$lhs, cmpty:$rhs, cond,
+                                         valty:$truev, valty:$falsev))]>;
+
+def Select_GPR_Using_CC_GPR : SelectCC_rrirr<HartRegs, HartRegs>;
+
+/// Branches and jumps
+
+// Match `Koda_brcc` and lower to the appropriate RISC-V branch instruction.
+class BccPat<CondCode Cond, KodaInstB Inst>
+    : Pat<(Koda_brcc HartRegs:$rs1, HartRegs:$rs2, Cond, bb:$imm12),
+          (Inst HartRegs:$rs1, HartRegs:$rs2, simm13_lsb0:$imm12)>;
+
+def : BccPat<SETEQ, BEQ>;
+def : BccPat<SETNE, BNE>;
+def : BccPat<SETLT, BLT>;
+def : BccPat<SETGE, BGE>;
+def : BccPat<SETULT, BLTU>;
+def : BccPat<SETUGE, BGEU>;
+
+let isBarrier = 1, isBranch = 1, isTerminator = 1 in
+def PseudoBR : Pseudo<(outs), (ins simm21_lsb0_jal:$imm20), [(br bb:$imm20)]>,
+               PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)>;
 
 let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in
 class Load_ri<bits<3> funct3, string opcodestr>
@@ -411,30 +516,56 @@ def FENCE : KodaInstI<0b000, OPC_MISC_MEM, (outs),
   let imm12 = {0b0000,pred,succ};
 }
 
-def WriteJmp        : SchedWrite;
-def ReadJmp         : SchedRead;
-
 let isBarrier = 1, isReturn = 1, isTerminator = 1 in
 def PseudoRET : Pseudo<(outs), (ins), [(Koda_ret_flag)]>,
                 PseudoInstExpansion<(JALR X0, X1, 0)>;
 
+// Note that the size is 32 because up to 8 32-bit instructions are needed to
+// generate an arbitrary 64-bit immediate. However, the size does not really
+// matter since PseudoLI is currently only used in the AsmParser where it gets
+// expanded to real instructions immediately.
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Size = 32,
+    isCodeGenOnly = 0, isAsmParserOnly = 1 in
+def PseudoLI : Pseudo<(outs HartRegs:$rd), (ins ixlenimm_li:$imm), [],
+                      "li", "$rd, $imm">;
+
+def PseudoLB  : PseudoLoad<"lb">;
+def PseudoLBU : PseudoLoad<"lbu">;
+def PseudoLH  : PseudoLoad<"lh">;
+def PseudoLHU : PseudoLoad<"lhu">;
+def PseudoLW  : PseudoLoad<"lw">;
+
+def PseudoSB  : PseudoStore<"sb">;
+def PseudoSH  : PseudoStore<"sh">;
+def PseudoSW  : PseudoStore<"sw">;
+
+def : Pat<(brind JALRRegs:$rs1), (PseudoBRIND JALRRegs:$rs1, 0)>;
+def : Pat<(brind (add JALRRegs:$rs1, simm12:$imm12)),
+          (PseudoBRIND JALRRegs:$rs1, simm12:$imm12)>;
+
+let EmitPriority = 0 in {
+def : InstAlias<"lb $rd, (${rs1})",
+                (LB  HartRegs:$rd, HartRegs:$rs1, 0)>;
+def : InstAlias<"lh $rd, (${rs1})",
+                (LH  HartRegs:$rd, HartRegs:$rs1, 0)>;
+def : InstAlias<"lw $rd, (${rs1})",
+                (LW  HartRegs:$rd, HartRegs:$rs1, 0)>;
+def : InstAlias<"lbu $rd, (${rs1})",
+                (LBU  HartRegs:$rd, HartRegs:$rs1, 0)>;
+def : InstAlias<"lhu $rd, (${rs1})",
+                (LHU  HartRegs:$rd, HartRegs:$rs1, 0)>;
+
+def : InstAlias<"sb $rs2, (${rs1})",
+                (SB  HartRegs:$rs2, HartRegs:$rs1, 0)>;
+def : InstAlias<"sh $rs2, (${rs1})",
+                (SH  HartRegs:$rs2, HartRegs:$rs1, 0)>;
+def : InstAlias<"sw $rs2, (${rs1})",
+                (SW  HartRegs:$rs2, HartRegs:$rs1, 0)>;
+}
 
 def IsOrAdd: PatFrag<(ops node:$A, node:$B), (or node:$A, node:$B), [{
   return isOrEquivalentToAdd(N);
 }]>;
-
-class PatGpr<SDPatternOperator OpNode, KodaInst Inst>
-    : Pat<(OpNode HartRegs:$rs1), (Inst HartRegs:$rs1)>;
-class PatGprGpr<SDPatternOperator OpNode, KodaInst Inst>
-    : Pat<(OpNode HartRegs:$rs1, HartRegs:$rs2), (Inst HartRegs:$rs1, HartRegs:$rs2)>;
-
-class PatGprImm<SDPatternOperator OpNode, KodaInst Inst, ImmLeaf ImmType>
-    : Pat<(XLenVT (OpNode (XLenVT HartRegs:$rs1), ImmType:$imm)),
-          (Inst HartRegs:$rs1, ImmType:$imm)>;
-class PatGprSimm12<SDPatternOperator OpNode, KodaInstI Inst>
-    : PatGprImm<OpNode, Inst, simm12>;
-class PatGprUimmLog2XLen<SDPatternOperator OpNode, KodaInstIShift Inst>
-    : PatGprImm<OpNode, Inst, uimmlog2xlen>;
 
 def AddrFI : ComplexPattern<iPTR, 1, "SelectAddrFI", [frameindex], []>;
 def BaseAddr : ComplexPattern<iPTR, 1, "SelectBaseAddr">;

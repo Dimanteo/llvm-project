@@ -49,19 +49,19 @@ unsigned KodaInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
 static KodaCC::CondCode getCondFromBranchOpc(unsigned Opc) {
   switch (Opc) {
   default:
-    return KodaCC::INVALID;
+    return KodaCC::COND_INVALID;
   case Koda::BEQ:
-    return KodaCC::EQ;
+    return KodaCC::COND_EQ;
   case Koda::BNE:
-    return KodaCC::NE;
+    return KodaCC::COND_NE;
   case Koda::BLT:
-    return KodaCC::LT;
+    return KodaCC::COND_LT;
   case Koda::BGE:
-    return KodaCC::GE;
+    return KodaCC::COND_GE;
   case Koda::BLTU:
-    return KodaCC::LTU;
+    return KodaCC::COND_LTU;
   case Koda::BGEU:
-    return KodaCC::GEU;
+    return KodaCC::COND_GEU;
   }
 }
 
@@ -81,17 +81,17 @@ const MCInstrDesc &KodaInstrInfo::getBrCond(KodaCC::CondCode CC) const {
   switch (CC) {
   default:
     llvm_unreachable("Unknown condition code!");
-  case KodaCC::EQ:
+  case KodaCC::COND_EQ:
     return get(Koda::BEQ);
-  case KodaCC::NE:
+  case KodaCC::COND_NE:
     return get(Koda::BNE);
-  case KodaCC::LT:
+  case KodaCC::COND_LT:
     return get(Koda::BLT);
-  case KodaCC::GE:
+  case KodaCC::COND_GE:
     return get(Koda::BGE);
-  case KodaCC::LTU:
+  case KodaCC::COND_LTU:
     return get(Koda::BLTU);
-  case KodaCC::GEU:
+  case KodaCC::COND_GEU:
     return get(Koda::BGEU);
   }
 }
@@ -100,18 +100,18 @@ KodaCC::CondCode KodaCC::getOppositeBranchCondition(KodaCC::CondCode CC) {
   switch (CC) {
   default:
     llvm_unreachable("Unrecognized conditional branch");
-  case KodaCC::EQ:
-    return KodaCC::NE;
-  case KodaCC::NE:
-    return KodaCC::EQ;
-  case KodaCC::LT:
-    return KodaCC::GE;
-  case KodaCC::GE:
-    return KodaCC::LT;
-  case KodaCC::LTU:
-    return KodaCC::GEU;
-  case KodaCC::GEU:
-    return KodaCC::LTU;
+  case KodaCC::COND_EQ:
+    return KodaCC::COND_NE;
+  case KodaCC::COND_NE:
+    return KodaCC::COND_EQ;
+  case KodaCC::COND_LT:
+    return KodaCC::COND_GE;
+  case KodaCC::COND_GE:
+    return KodaCC::COND_LT;
+  case KodaCC::COND_LTU:
+    return KodaCC::COND_GEU;
+  case KodaCC::COND_GEU:
+    return KodaCC::COND_LTU;
   }
 }
 
@@ -303,7 +303,7 @@ unsigned KodaInstrInfo::insertBranch(
 
   // Unconditional branch.
   if (Cond.empty()) {
-    MachineInstr &MI = *BuildMI(&MBB, DL, get(Koda::JAL)).addMBB(TBB);
+    MachineInstr &MI = *BuildMI(&MBB, DL, get(Koda::PseudoBR)).addMBB(TBB);
     if (BytesAdded)
       *BytesAdded += getInstSizeInBytes(MI);
     return 1;
@@ -321,7 +321,7 @@ unsigned KodaInstrInfo::insertBranch(
     return 1;
 
   // Two-way conditional branch.
-  MachineInstr &MI = *BuildMI(&MBB, DL, get(Koda::JAL)).addMBB(FBB);
+  MachineInstr &MI = *BuildMI(&MBB, DL, get(Koda::PseudoBR)).addMBB(FBB);
   if (BytesAdded)
     *BytesAdded += getInstSizeInBytes(MI);
   return 2;
