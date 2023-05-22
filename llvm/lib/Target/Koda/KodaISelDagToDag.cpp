@@ -1,6 +1,7 @@
 #include "MCTargetDesc/KodaMCTargetDesc.h"
 #include "Koda.h"
 #include "KodaTargetMachine.h"
+#include "MCTargetDesc/KodaMatInt.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -75,6 +76,28 @@ bool KodaDAGToDAGISel::SelectBaseAddr(SDValue Addr, SDValue &Base) {
   return true;
 }
 
+static SDNode *selectImm(SelectionDAG *CurDAG, const SDLoc &DL, const MVT VT,
+                         int64_t Imm, const KodaSubtarget &Subtarget) {
+  MVT XLenVT = Subtarget.getXLenVT();
+  KodaMatInt::InstSeq Seq =
+      KodaMatInt::generateInstSeq(Imm, Subtarget.getFeatureBits());
+
+  SDNode *Result = nullptr;
+  SDValue SrcReg = CurDAG->getRegister(Koda::X0, XLenVT);
+  for (KodaMatInt::Inst &Inst : Seq) {
+    SDValue SDImm = CurDAG->getTargetConstant(Inst.Imm, DL, XLenVT);
+    if (Inst.Opc == Koda::LUI)
+      Result = CurDAG->getMachineNode(Koda::LUI, DL, XLenVT, SDImm);
+    else
+      Result = CurDAG->getMachineNode(Inst.Opc, DL, XLenVT, SrcReg, SDImm);
+
+    // Only the first instruction has X0 as its source.
+    SrcReg = SDValue(Result, 0);
+  }
+
+  return Result;
+}
+
 void KodaDAGToDAGISel::Select(SDNode *Node) {
   if (Node->isMachineOpcode()) {
     LLVM_DEBUG(dbgs() << "== "; Node->dump(CurDAG); dbgs() << "\n");
@@ -84,22 +107,32 @@ void KodaDAGToDAGISel::Select(SDNode *Node) {
   unsigned Opcode = Node->getOpcode();
   SDLoc DL(Node);
   MVT VT = Node->getSimpleValueType(0);
+  MVT XLenVT = Subtarget->getXLenVT();
 
   switch (Opcode) {
   case ISD::Constant: {
-    // auto *ConstNode = cast<ConstantSDNode>(Node);
-    SDValue New =
-        CurDAG->getCopyFromReg(CurDAG->getEntryNode(), DL, Koda::X0, MVT::i32);
-    ReplaceNode(Node, New.getNode());
+    auto *ConstNode = cast<ConstantSDNode>(Node);
+    if (VT == XLenVT && ConstNode->isZero()) {
+      SDValue New =
+          CurDAG->getCopyFromReg(CurDAG->getEntryNode(), DL, Koda::X0, XLenVT);
+      ReplaceNode(Node, New.getNode());
+      return;
+    }
+
+    int64_t Imm = ConstNode->getSExtValue();
+    ReplaceNode(Node, selectImm(CurDAG, DL, VT, Imm, *Subtarget));
     return;
   }
   case ISD::FrameIndex: {
-    SDValue Imm = CurDAG->getTargetConstant(0, DL, MVT::i32);
+    SDValue Imm = CurDAG->getTargetConstant(0, DL, XLenVT);
     int FI = cast<FrameIndexSDNode>(Node)->getIndex();
     SDValue TFI = CurDAG->getTargetFrameIndex(FI, VT);
     ReplaceNode(Node, CurDAG->getMachineNode(Koda::ADDI, DL, VT, TFI, Imm));
     return;
   }
+  // default:
+  //   Node->print(dbgs());
+  //   dbgs() << "\n";
   }
   SelectCode(Node);
 }

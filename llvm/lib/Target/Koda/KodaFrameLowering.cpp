@@ -22,8 +22,8 @@ void KodaFrameLowering::determineCalleeSaves(MachineFunction &MF,
   // Unconditionally spill RA and FP only if the function uses a frame
   // pointer.
   if (hasFP(MF)) {
-    SavedRegs.set(Koda::RA);
-    SavedRegs.set(Koda::FP);
+    SavedRegs.set(Koda::X1);
+    SavedRegs.set(Koda::X8);
   }
 }
 

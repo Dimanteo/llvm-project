@@ -33,3 +33,11 @@ def HartRegs : RegisterClass<"Koda", [XLenVT], 32, (add
   X24, X25, X26, X27, X28, X29, X3, X30, X31, X4, X5, X6, X7, X8, X9)> {
     let RegInfos = XLenRI;
   }
+
+// Don't use X1 or X5 for JALR since that is a hint to pop the return address
+// stack on some microarchitectures. Also remove the reserved registers X0, X2,
+// X3, and X4 as it reduces the number of register classes that get synthesized
+// by tablegen.
+def JALRRegs : RegisterClass<"Koda", [XLenVT], 32, (sub HartRegs, (sequence "X%u", 0, 5))> {
+  let RegInfos = XLenRI;
+}

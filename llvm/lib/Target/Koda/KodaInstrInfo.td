@@ -87,19 +87,166 @@ def Koda_read_cycle_wide : SDNode<"KodaISD::READ_CYCLE_WIDE",
 // Operand and SDNode transformation definitions.
 //===----------------------------------------------------------------------===//
 
-def simm12 : Operand<i32> {}
+class ImmXLenAsmOperand<string prefix, string suffix = ""> : AsmOperandClass {
+  let Name = prefix # "ImmXLen" # suffix;
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = !strconcat("Invalid", Name);
+}
 
-def uimm12 : Operand<i32> {}
+class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
+  let Name = prefix # "Imm" # width # suffix;
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = !strconcat("Invalid", Name);
+}
 
-def simm20 : Operand<i32> {}
+// A parse method for (${gpr}) or 0(${gpr}), where the 0 is be silently ignored.
+def ZeroOffsetMemOpOperand : AsmOperandClass {
+  let Name = "ZeroOffsetMemOpOperand";
+  let RenderMethod = "addRegOperands";
+  let PredicateMethod = "isGPR";
+  let ParserMethod = "parseZeroOffsetMemOp";
+}
 
-def uimmlog2 : Operand<i32> {}
+// Check if (add r, imm) can be optimized to (ADDI (ADDI r, imm0), imm1),
+// in which imm = imm0 + imm1 and both imm0 and imm1 are simm12.
+def AddiPair : PatLeaf<(imm), [{
+  if (!N->hasOneUse())
+    return false;
+  // The immediate operand must be in range [-4096,-2049] or [2048,4094].
+  int64_t Imm = N->getSExtValue();
+  return (-4096 <= Imm && Imm <= -2049) || (2048 <= Imm && Imm <= 4094);
+}]>;
 
-def uimm20_lui : Operand<i32> {}
+// Return imm/2.
+def AddiPairImmA : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(N->getSExtValue() / 2, SDLoc(N),
+                                   N->getValueType(0));
+}]>;
 
-def uimm20_auipc : Operand<i32> {}
+// Return imm - imm/2.
+def AddiPairImmB : SDNodeXForm<imm, [{
+  int64_t Imm = N->getSExtValue();
+  return CurDAG->getTargetConstant(Imm - Imm / 2, SDLoc(N),
+                                   N->getValueType(0));
+}]>;
+
+def HartRegsMemZeroOffset : RegisterOperand<HartRegs> {
+  let ParserMatchClass = ZeroOffsetMemOpOperand;
+  let PrintMethod = "printZeroOffsetMemOp";
+}
+
+class SImmAsmOperand<int width, string suffix = "">
+    : ImmAsmOperand<"S", width, suffix> {
+}
+
+class UImmAsmOperand<int width, string suffix = "">
+    : ImmAsmOperand<"U", width, suffix> {
+}
+
+def UImmLog2XLenAsmOperand : AsmOperandClass {
+  let Name = "UImmLog2XLen";
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = "InvalidUImmLog2XLen";
+}
+
+def uimmlog2xlen : Operand<XLenVT>, ImmLeaf<XLenVT, [{
+  return isUInt<5>(Imm);
+}]> {
+  let ParserMatchClass = UImmLog2XLenAsmOperand;
+  // TODO: should ensure invalid shamt is rejected when decoding.
+  let DecoderMethod = "decodeUImmOperand<6>";
+  let MCOperandPredicate = [{
+    int64_t Imm;
+    if (!MCOp.evaluateAsConstantImm(Imm))
+      return false;
+    if (STI.getTargetTriple().isArch64Bit())
+      return isUInt<6>(Imm);
+    return isUInt<5>(Imm);
+  }];
+  // let OperandType = "OPERAND_UIMMLOG2XLEN";
+  // let OperandNamespace = "KodaOp";
+}
+
+def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]> {
+  let ParserMatchClass = SImmAsmOperand<12>;
+  let EncoderMethod = "getImmOpValue";
+  let DecoderMethod = "decodeSImmOperand<12>";
+  let MCOperandPredicate = [{
+    int64_t Imm;
+    if (MCOp.evaluateAsConstantImm(Imm))
+      return isInt<12>(Imm);
+    return MCOp.isBareSymbolRef();
+  }];
+  // let OperandType = "OPERAND_SIMM12";
+  // let OperandNamespace = "KodaOp";
+}
+
+
+// A 13-bit signed immediate where the least significant bit is zero.
+def simm13_lsb0 : Operand<OtherVT> {
+  let ParserMatchClass = SImmAsmOperand<13, "Lsb0">;
+  let PrintMethod = "printBranchOperand";
+  let EncoderMethod = "getImmOpValueAsr1";
+  let DecoderMethod = "decodeSImmOperandAndLsl1<13>";
+  let OperandType = "OPERAND_PCREL";
+}
+
+class UImm20Operand : Operand<XLenVT> {
+  let EncoderMethod = "getImmOpValue";
+  let DecoderMethod = "decodeUImmOperand<20>";
+  let MCOperandPredicate = [{
+    int64_t Imm;
+    if (MCOp.evaluateAsConstantImm(Imm))
+      return isUInt<20>(Imm);
+    return MCOp.isBareSymbolRef();
+  }];
+  // let OperandType = "OPERAND_UIMM20";
+  // let OperandNamespace = "KodaOp";
+}
+
+def uimm20_lui : UImm20Operand {
+  let ParserMatchClass = UImmAsmOperand<20, "LUI">;
+}
+def uimm20_auipc : UImm20Operand {
+  let ParserMatchClass = UImmAsmOperand<20, "AUIPC">;
+}
+
+def Simm21Lsb0JALAsmOperand : SImmAsmOperand<21, "Lsb0JAL"> {
+  let ParserMethod = "parseJALOffset";
+}
+
+def ixlenimm_li : Operand<XLenVT> {
+  let ParserMatchClass = ImmXLenAsmOperand<"", "LI">;
+}
+
+// A 21-bit signed immediate where the least significant bit is zero.
+def simm21_lsb0_jal : Operand<OtherVT> {
+  let ParserMatchClass = Simm21Lsb0JALAsmOperand;
+  let PrintMethod = "printBranchOperand";
+  let EncoderMethod = "getImmOpValueAsr1";
+  let DecoderMethod = "decodeSImmOperandAndLsl1<21>";
+  let MCOperandPredicate = [{
+    int64_t Imm;
+    if (MCOp.evaluateAsConstantImm(Imm))
+      return isShiftedInt<20, 1>(Imm);
+    return MCOp.isBareSymbolRef();
+  }];
+  let OperandType = "OPERAND_PCREL";
+}
 
 def fencearg : Operand<i32> {}
+
+def CallSymbol : AsmOperandClass {
+  let Name = "CallSymbol";
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = "InvalidCallSymbol";
+  let ParserMethod = "parseCallSymbol";
+}
+
+// A bare symbol used in call/tail only.
+def call_symbol : Operand<XLenVT> {
+  let ParserMatchClass = CallSymbol;
+}
 
 //===----------------------------------------------------------------------===//
 // Instructions
@@ -138,7 +285,7 @@ let hasSideEffects = 0, mayLoad = 0,
                      (outs HartRegs
                       : $rd),
                      (ins HartRegs
-                      : $rs1, uimmlog2 : $shamt),
+                      : $rs1, uimmlog2xlen : $shamt),
                      opcodestr, "$rd, $rs1, $shamt">;
 
 def ADDI : ALU_ri<0b000, "addi">;
@@ -178,7 +325,7 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
   let isCall = 1 in def JAL : KodaInstJ<OPC_JAL,
                                         (outs HartRegs
                                          : $rd),
-                                        (ins simm20 : $imm20),
+                                        (ins simm21_lsb0_jal : $imm20),
                                         "jal", "$rd, $imm20", []>;
 
   let isCall = 1
@@ -189,6 +336,30 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
                                           : $rs1, simm12 : $imm12),
                                          "jalr", "$rd, ${imm12}(${rs1})", []>;
 }
+
+// PseudoCALL is a pseudo instruction which will eventually expand to auipc
+// and jalr while encoding. This is desirable, as an auipc+jalr pair with
+// R_sim_CALL and R_sim_RELAX relocations can be be relaxed by the linker
+// if the offset fits in a signed 21-bit immediate.
+// Define AsmString to print "call" when compile with -S flag.
+// Define isCodeGenOnly = 0 to support parsing assembly "call" instruction.
+let isCall = 1, Defs = [X1], isCodeGenOnly = 0, Size = 8 in
+def PseudoCALL : Pseudo<(outs), (ins call_symbol:$func), []> {
+  let AsmString = "call\t$func";
+}
+
+def : Pat<(Koda_call tglobaladdr:$func), (PseudoCALL tglobaladdr:$func)>;
+def : Pat<(Koda_call texternalsym:$func), (PseudoCALL texternalsym:$func)>;
+
+
+let isCall = 1, Defs = [X1] in
+def PseudoCALLIndirect : Pseudo<(outs), (ins JALRRegs:$rs1),
+                                [(Koda_call JALRRegs:$rs1)]>,
+                         PseudoInstExpansion<(JALR X1, HartRegs:$rs1, 0)>;
+
+let isBarrier = 1, isBranch = 1, isIndirectBranch = 1, isTerminator = 1 in
+def PseudoBRIND : Pseudo<(outs), (ins JALRRegs:$rs1, simm12:$imm12), []>,
+                  PseudoInstExpansion<(JALR X0, HartRegs:$rs1, simm12:$imm12)>;
 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 class BranchCC_rri<bits<3> funct3, string opcodestr>
@@ -247,7 +418,89 @@ let isBarrier = 1, isReturn = 1, isTerminator = 1 in
 def PseudoRET : Pseudo<(outs), (ins), [(Koda_ret_flag)]>,
                 PseudoInstExpansion<(JALR X0, X1, 0)>;
 
+
+def IsOrAdd: PatFrag<(ops node:$A, node:$B), (or node:$A, node:$B), [{
+  return isOrEquivalentToAdd(N);
+}]>;
+
+class PatGpr<SDPatternOperator OpNode, KodaInst Inst>
+    : Pat<(OpNode HartRegs:$rs1), (Inst HartRegs:$rs1)>;
+class PatGprGpr<SDPatternOperator OpNode, KodaInst Inst>
+    : Pat<(OpNode HartRegs:$rs1, HartRegs:$rs2), (Inst HartRegs:$rs1, HartRegs:$rs2)>;
+
+class PatGprImm<SDPatternOperator OpNode, KodaInst Inst, ImmLeaf ImmType>
+    : Pat<(XLenVT (OpNode (XLenVT HartRegs:$rs1), ImmType:$imm)),
+          (Inst HartRegs:$rs1, ImmType:$imm)>;
+class PatGprSimm12<SDPatternOperator OpNode, KodaInstI Inst>
+    : PatGprImm<OpNode, Inst, simm12>;
+class PatGprUimmLog2XLen<SDPatternOperator OpNode, KodaInstIShift Inst>
+    : PatGprImm<OpNode, Inst, uimmlog2xlen>;
+
+def AddrFI : ComplexPattern<iPTR, 1, "SelectAddrFI", [frameindex], []>;
+def BaseAddr : ComplexPattern<iPTR, 1, "SelectBaseAddr">;
+
+/// Simple arithmetic operations
+
+def : PatGprGpr<add, ADD>;
+def : PatGprSimm12<add, ADDI>;
+def : PatGprGpr<sub, SUB>;
+def : PatGprGpr<or, OR>;
+def : PatGprSimm12<or, ORI>;
+def : PatGprGpr<and, AND>;
+def : PatGprSimm12<and, ANDI>;
+def : PatGprGpr<xor, XOR>;
+def : PatGprSimm12<xor, XORI>;
+def : PatGprUimmLog2XLen<shl, SLLI>;
+def : PatGprUimmLog2XLen<srl, SRLI>;
+def : PatGprUimmLog2XLen<sra, SRAI>;
+
+/// FrameIndex calculations
+
+def : Pat<(add (XLenVT AddrFI:$Rs), simm12:$imm12),
+          (ADDI (XLenVT AddrFI:$Rs), simm12:$imm12)>;
+def : Pat<(IsOrAdd (XLenVT AddrFI:$Rs), simm12:$imm12),
+          (ADDI (XLenVT AddrFI:$Rs), simm12:$imm12)>;
+
+/// Simple optimization
+def : Pat<(add HartRegs:$rs1, (AddiPair:$rs2)),
+          (ADDI (ADDI HartRegs:$rs1, (AddiPairImmB AddiPair:$rs2)),
+                (AddiPairImmA HartRegs:$rs2))>;
+
+/// Loads
+
+multiclass LdPat<PatFrag LoadOp, KodaInst Inst, ValueType vt = XLenVT> {
+  def : Pat<(vt (LoadOp BaseAddr:$rs1)), (Inst BaseAddr:$rs1, 0)>;
+  def : Pat<(vt (LoadOp (add BaseAddr:$rs1, simm12:$imm12))),
+            (Inst BaseAddr:$rs1, simm12:$imm12)>;
+  def : Pat<(vt (LoadOp (IsOrAdd AddrFI:$rs1, simm12:$imm12))),
+            (Inst AddrFI:$rs1, simm12:$imm12)>;
+}
+
+defm : LdPat<sextloadi8, LB>;
+defm : LdPat<extloadi8, LB>;
+defm : LdPat<sextloadi16, LH>;
+defm : LdPat<extloadi16, LH>;
+defm : LdPat<load, LW, i32>;
+defm : LdPat<zextloadi8, LBU>;
+defm : LdPat<zextloadi16, LHU>;
+
+/// Stores
+
+multiclass StPat<PatFrag StoreOp, KodaInst Inst, RegisterClass StTy,
+                 ValueType vt> {
+  def : Pat<(StoreOp (vt StTy:$rs2), BaseAddr:$rs1),
+            (Inst StTy:$rs2, BaseAddr:$rs1, 0)>;
+  def : Pat<(StoreOp (vt StTy:$rs2), (add BaseAddr:$rs1, simm12:$imm12)),
+            (Inst StTy:$rs2, BaseAddr:$rs1, simm12:$imm12)>;
+  def : Pat<(StoreOp (vt StTy:$rs2), (IsOrAdd AddrFI:$rs1, simm12:$imm12)),
+            (Inst StTy:$rs2, AddrFI:$rs1, simm12:$imm12)>;
+}
+
+defm : StPat<truncstorei8, SB, HartRegs, XLenVT>;
+defm : StPat<truncstorei16, SH, HartRegs, XLenVT>;
+defm : StPat<store, SW, HartRegs, i32>;
+
 let Defs = [X2], Uses = [X2] in {
-def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), []>;
-def ADJCALLSTACKUP   : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), []>;
+def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), [(callseq_start timm:$amt1, timm:$amt2)]>;
+def ADJCALLSTACKUP   : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2), [(callseq_end timm:$amt1, timm:$amt2)]>;
 } // Defs = [X2], Uses = [X2]
