@@ -212,6 +212,12 @@ def simm13_lsb0 : Operand<OtherVT> {
   let PrintMethod = "printBranchOperand";
   let EncoderMethod = "getImmOpValueAsr1";
   let DecoderMethod = "decodeSImmOperandAndLsl1<13>";
+  let MCOperandPredicate = [{
+    int64_t Imm;
+    if (MCOp.evaluateAsConstantImm(Imm))
+      return isShiftedInt<12, 1>(Imm);
+    return MCOp.isBareSymbolRef();
+  }];
   let OperandType = "OPERAND_PCREL";
 }
 
@@ -388,7 +394,7 @@ def PseudoBRIND : Pseudo<(outs), (ins JALRRegs:$rs1, simm12:$imm12), []>,
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 class BranchCC_rri<bits<3> funct3, string opcodestr>
     : KodaInstB<funct3, OPC_BRANCH, (outs),
-              (ins HartRegs:$rs1, HartRegs:$rs2, simm12 : $imm12),
+              (ins HartRegs:$rs1, HartRegs:$rs2, simm13_lsb0 : $imm12),
               opcodestr, "$rs1, $rs2, $imm12", []>,
               Sched<[WriteJmp, ReadJmp, ReadJmp]>  {
   let isBranch = 1;
