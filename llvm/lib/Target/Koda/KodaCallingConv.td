@@ -29,7 +29,7 @@ def CC_Koda : CallingConv<[
   CCIfType<[i32], CCAssignToStack<4, 1>>
 ]>;
 
-def CSR_Koda : CalleeSavedRegs<(add X2, X8, X9, X10, (sequence "X%u", 18, 27))>;
+def CSR_Koda : CalleeSavedRegs<(add X1, X2, X8, X9, X10, (sequence "X%u", 18, 27))>;
 def CSR_NoRegs : CalleeSavedRegs<(add)>;
 
 // Interrupt handler needs to save/restore all registers that are used,
