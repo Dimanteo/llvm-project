@@ -166,6 +166,12 @@ StringRef llvm::object::getELFRelocationTypeName(uint32_t Machine,
       break;
     }
     break;
+  case ELF::EM_KODA:
+    switch (Type) {
+      #include "llvm/BinaryFormat/ELFRelocs/Koda.def"
+      default:
+        break;
+    }
   default:
     break;
   }

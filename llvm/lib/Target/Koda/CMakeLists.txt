@@ -13,6 +13,7 @@ tablegen(LLVM KodaGenMCPseudoLowering.inc -gen-pseudo-lowering)
 tablegen(LLVM KodaGenSubtargetInfo.inc -gen-subtarget)
 tablegen(LLVM KodaGenAsmWriter.inc -gen-asm-writer)
 tablegen(LLVM KodaGenDAGISel.inc -gen-dag-isel)
+tablegen(LLVM KodaGenMCCodeEmitter.inc -gen-emitter)
 #tablegen(LLVM KodaGenDisassemblerTables.inc -gen-disassembler)
 
 add_public_tablegen_target(KodaCommonTableGen)

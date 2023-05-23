@@ -1,5 +1,6 @@
 #include "KodaInstPrinter.h"
 #include "MCTargetDesc/KodaInfo.h"
+#include "MCTargetDesc/KodaMCExpr.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"

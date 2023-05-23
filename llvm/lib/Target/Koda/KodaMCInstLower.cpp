@@ -1,6 +1,6 @@
 #include "Koda.h"
 #include "KodaSubtarget.h"
-//#include "MCTargetDesc/KodaMCExpr.h"
+#include "MCTargetDesc/KodaMCExpr.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -18,12 +18,61 @@ static MCOperand lowerSymbolOperand(const MachineOperand &MO, MCSymbol *Sym,
                                     const AsmPrinter &AP) {
   MCContext &Ctx = AP.OutContext;
 
+  KodaMCExpr::VariantKind Kind;
+
+  switch (MO.getTargetFlags()) {
+  default:
+    llvm_unreachable("Unknown target flag on GV operand");
+  case KodaII::MO_None:
+    Kind = KodaMCExpr::VK_Koda_None;
+    break;
+  case KodaII::MO_CALL:
+    Kind = KodaMCExpr::VK_Koda_CALL;
+    break;
+  case KodaII::MO_PLT:
+    Kind = KodaMCExpr::VK_Koda_CALL_PLT;
+    break;
+  case KodaII::MO_LO:
+    Kind = KodaMCExpr::VK_Koda_LO;
+    break;
+  case KodaII::MO_HI:
+    Kind = KodaMCExpr::VK_Koda_HI;
+    break;
+  case KodaII::MO_PCREL_LO:
+    Kind = KodaMCExpr::VK_Koda_PCREL_LO;
+    break;
+  case KodaII::MO_PCREL_HI:
+    Kind = KodaMCExpr::VK_Koda_PCREL_HI;
+    break;
+  case KodaII::MO_GOT_HI:
+    Kind = KodaMCExpr::VK_Koda_GOT_HI;
+    break;
+  case KodaII::MO_TPREL_LO:
+    Kind = KodaMCExpr::VK_Koda_TPREL_LO;
+    break;
+  case KodaII::MO_TPREL_HI:
+    Kind = KodaMCExpr::VK_Koda_TPREL_HI;
+    break;
+  case KodaII::MO_TPREL_ADD:
+    Kind = KodaMCExpr::VK_Koda_TPREL_ADD;
+    break;
+  case KodaII::MO_TLS_GOT_HI:
+    Kind = KodaMCExpr::VK_Koda_TLS_GOT_HI;
+    break;
+  case KodaII::MO_TLS_GD_HI:
+    Kind = KodaMCExpr::VK_Koda_TLS_GD_HI;
+    break;
+  }
+
   const MCExpr *ME =
       MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None, Ctx);
 
   if (!MO.isJTI() && !MO.isMBB() && MO.getOffset())
     ME = MCBinaryExpr::createAdd(
         ME, MCConstantExpr::create(MO.getOffset(), Ctx), Ctx);
+
+  if (Kind != KodaMCExpr::VK_Koda_None)
+    ME = KodaMCExpr::create(ME, Kind, Ctx);
 
   return MCOperand::createExpr(ME);
 }

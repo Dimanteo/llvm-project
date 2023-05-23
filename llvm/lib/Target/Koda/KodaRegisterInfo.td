@@ -2,8 +2,10 @@
 //  Declarations that describe the Koda register files
 //===----------------------------------------------------------------------===//
 
-class KodaReg<bits<16> Enc, string n> : Register<n> {
-  let HWEncoding = Enc;
+let Namespace = "Koda" in {
+class KodaReg<bits<5> Enc, string n> : Register<n> {
+  let HWEncoding{4-0} = Enc;
+}
 }
 
 //===----------------------------------------------------------------------===//
@@ -28,9 +30,8 @@ def XLenRI : RegInfoByHwMode<
       [Koda32],
       [RegInfo<32,32,32>]>;
 
-def HartRegs : RegisterClass<"Koda", [XLenVT], 32, (add
-  X0, X1, X10, X11, X12, X13, X14, X15, X16, X17, X18, X19, X2, X20, X21, X22, X23, 
-  X24, X25, X26, X27, X28, X29, X3, X30, X31, X4, X5, X6, X7, X8, X9)> {
+def HartRegs : RegisterClass<"Koda", [XLenVT], 32,
+    (add (sequence "X%u", 0, 31))> {
     let RegInfos = XLenRI;
   }
 

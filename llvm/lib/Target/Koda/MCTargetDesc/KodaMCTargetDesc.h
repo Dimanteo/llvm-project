@@ -15,14 +15,34 @@
 #define LLVM_LIB_TARGET_Koda_MCTARGETDESC_KodaMCTARGETDESC_H
 
 #include "llvm/Support/DataTypes.h"
+#include "llvm/MC/MCTargetOptions.h"
+#include "llvm/Config/config.h"
 
 #include <memory>
 
 namespace llvm {
 class Target;
 class Triple;
+class MCAsmBackend;
+class MCCodeEmitter;
+class MCContext;
+class MCInstrInfo;
+class MCObjectTargetWriter;
+class MCRegisterInfo;
+class MCSubtargetInfo;
 
 extern Target TheKodaTarget;
+
+MCCodeEmitter *createKodaMCCodeEmitter(const MCInstrInfo &MCII,
+                                        const MCRegisterInfo &MRI,
+                                        MCContext &Ctx);
+
+std::unique_ptr<MCObjectTargetWriter> createKodaELFObjectWriter(uint8_t OSABI,
+                                                                 bool Is64Bit);
+
+MCAsmBackend *createKodaAsmBackend(const Target &T, const MCSubtargetInfo &STI,
+                                    const MCRegisterInfo &MRI,
+                                    const MCTargetOptions &Options);
 
 } // End llvm namespace
 

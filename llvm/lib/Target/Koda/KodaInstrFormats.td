@@ -22,12 +22,12 @@ class KodaInst<dag outs, dag ins, string asmstr, string argstr, list<dag> patter
 
   field bits<32> SoftFail = 0; // Expected by tablegen, not used in koda
   field bits<32> Inst;
-  field bits<7> Opcode = 0;
+  bits<7> Opcode = 0;
 
   let Inst{6 - 0} = Opcode;
 
-  let OutOperandList = outs;
-  let InOperandList = ins;
+  dag OutOperandList = outs;
+  dag InOperandList = ins;
   let AsmString = asmstr # "\t" # argstr;
   let Pattern = pattern;
   let TSFlags{4-0} = format.Value;
